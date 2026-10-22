@@ -312,7 +312,7 @@ You can run BentoPDF locally for development or personal use.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18 or higher recommended)
+- [Node.js](https://nodejs.org/) (24.22.1 or newer patched 24.x release)
 - [npm](https://www.npmjs.com/) (or yarn/pnpm)
 - [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/install/) (for containerized setup)
 
