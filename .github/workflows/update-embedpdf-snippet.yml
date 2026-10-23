@@ -12,7 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.1"
+          cache: npm
 
       - name: Read current upstream version marker
         id: current-version
@@ -54,13 +60,6 @@ jobs:
       - name: Clone upstream embed-pdf-viewer
         if: steps.gate.outputs.run == 'true'
         run: git clone --depth 1 --branch main https://github.com/embedpdf/embed-pdf-viewer ./_upstream/embed-pdf-viewer
-
-      - name: Setup Node
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
 
       - name: Install upstream deps
         if: steps.gate.outputs.run == 'true'

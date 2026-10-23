@@ -8,3 +8,14 @@ coverage
 *.md
 .vscode
 .idea
+# Private configuration and local artifacts
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets
+work
+outputs
+.npm-cache
+docs/.vitepress/cache

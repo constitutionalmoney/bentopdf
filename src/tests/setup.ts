@@ -1,4 +1,14 @@
 import { afterEach, vi } from 'vitest';
+import { webcrypto } from 'node:crypto';
+
+// jsdom omits SubtleCrypto; use the standard implementation that browsers
+// provide on secure origins so signature tests exercise the production path.
+if (!globalThis.crypto?.subtle) {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+    configurable: true,
+  });
+}
 
 class TestDOMMatrix {
   a = 1;

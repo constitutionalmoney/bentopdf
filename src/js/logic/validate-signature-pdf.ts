@@ -148,27 +148,11 @@ export async function validateSignature(
     // Check trust against provided certificate (cryptographic, not name/serial match)
     if (trustedCert) {
       try {
-        const trustedPem = forge.pki.certificateToPem(trustedCert);
-        const isSameCert =
-          forge.pki.certificateToPem(signerCert) === trustedPem;
-
-        let cryptoIssued = false;
-        const chain = [
+        result.isTrusted = await hasTrustedCertificatePath(
           signerCert,
-          ...(p7.certificates as forge.pki.Certificate[]),
-        ];
-        for (const cert of chain) {
-          try {
-            if (trustedCert.verify(cert)) {
-              cryptoIssued = true;
-              break;
-            }
-          } catch {
-            continue;
-          }
-        }
-
-        result.isTrusted = isSameCert || cryptoIssued;
+          trustedCert,
+          p7.certificates as forge.pki.Certificate[]
+        );
       } catch {
         result.isTrusted = false;
       }
@@ -242,7 +226,6 @@ export async function validateSignature(
       p7,
       pdfBytes,
       signature.byteRange,
-      signerCert,
       signerInfoFields
     );
 
@@ -675,6 +658,68 @@ async function verifyViaWebCrypto(
   }
 }
 
+// Forge remains useful for parsing, but its PKCS#1 verifier is affected by
+// GHSA-86w9-cpqp-85rv. Use Web Crypto for each actual signature check and require
+// a connected path from the signer, not an unrelated trusted certificate in CMS.
+async function hasTrustedCertificatePath(
+  signer: forge.pki.Certificate,
+  trusted: forge.pki.Certificate,
+  certificates: forge.pki.Certificate[]
+): Promise<boolean> {
+  const trustedPem = forge.pki.certificateToPem(trusted);
+  const candidates = [trusted, ...certificates];
+  const now = new Date();
+
+  async function visit(
+    cert: forge.pki.Certificate,
+    seen: Set<string>
+  ): Promise<boolean> {
+    const pem = forge.pki.certificateToPem(cert);
+    if (seen.has(pem) || seen.size >= 8) return false;
+    if (now < cert.validity.notBefore || now > cert.validity.notAfter)
+      return false;
+    if (pem === trustedPem) return true;
+    const path = new Set(seen).add(pem);
+
+    for (const issuer of candidates) {
+      if (!cert.isIssuer(issuer)) continue;
+      const issuerPem = forge.pki.certificateToPem(issuer);
+      if (path.has(issuerPem)) continue;
+      // Explicitly supplied anchors are trusted by the user. Other issuers
+      // must be CA certificates with permission to sign certificates.
+      if (issuerPem !== trustedPem) {
+        const constraints = issuer.getExtension('basicConstraints') as {
+          cA?: boolean;
+        } | null;
+        const usage = issuer.getExtension('keyUsage') as {
+          keyCertSign?: boolean;
+        } | null;
+        if (!constraints?.cA || (usage && !usage.keyCertSign)) continue;
+      }
+      try {
+        const value = forge.pki.certificateToAsn1(cert).value;
+        if (!Array.isArray(value) || !Array.isArray(value[1]?.value)) continue;
+        const scheme = detectSigScheme(value[1].value, '');
+        if ('unsupported' in scheme || scheme.hashName === 'SHA-1') continue;
+        const spki = forge.pki.publicKeyToAsn1(issuer.publicKey);
+        const result = await verifyViaWebCrypto(
+          scheme,
+          latin1ToUint8(forge.asn1.toDer(spki).getBytes()),
+          latin1ToUint8(forge.asn1.toDer(value[0]).getBytes()),
+          latin1ToUint8(cert.signature)
+        );
+        if (result.status === 'verified' && (await visit(issuer, path)))
+          return true;
+      } catch {
+        // Malformed or unsupported certificates cannot establish trust.
+      }
+    }
+    return false;
+  }
+
+  return visit(signer, new Set());
+}
+
 async function performCryptoVerification(
   p7: forge.pkcs7.PkcsSignedData & {
     rawCapture?: {
@@ -684,7 +729,6 @@ async function performCryptoVerification(
   },
   pdfBytes: Uint8Array,
   byteRange: number[],
-  signerCert: forge.pki.Certificate,
   fields: SignerInfoFields | null
 ): Promise<CryptoVerificationResult> {
   if (!fields) {
@@ -704,10 +748,12 @@ async function performCryptoVerification(
 
   const [start1, len1, start2, len2] = byteRange;
   if (
-    start1 < 0 ||
+    !byteRange.every(Number.isSafeInteger) ||
+    start1 !== 0 ||
     len1 < 0 ||
     start2 < 0 ||
     len2 < 0 ||
+    len1 > start2 ||
     start1 + len1 > pdfBytes.length ||
     start2 + len2 > pdfBytes.length
   ) {
@@ -781,18 +827,6 @@ async function performCryptoVerification(
     signedBytesForVerify = latin1ToUint8(forge.asn1.toDer(asSet).getBytes());
   } else {
     signedBytesForVerify = signedContent;
-  }
-
-  if (scheme.kind === 'rsa-pkcs1') {
-    try {
-      const publicKey = signerCert.publicKey as forge.pki.rsa.PublicKey;
-      const md2 = createMd(fields.digestOid)!;
-      md2.update(uint8ToLatin1(signedBytesForVerify));
-      const ok = publicKey.verify(md2.digest().bytes(), signatureBytes);
-      if (ok) return { status: 'verified' };
-    } catch {
-      // fall through to Web Crypto
-    }
   }
 
   const spkiDer = extractSpkiDer(p7);

@@ -36,7 +36,7 @@ The tool extracts PKCS#7 signature objects from the PDF, decodes the ASN.1 struc
 
 | Algorithm               | Verification path                                                                      |
 | ----------------------- | -------------------------------------------------------------------------------------- |
-| RSA (PKCS#1 v1.5)       | node-forge `publicKey.verify`, with Web Crypto fallback                                |
+| RSA (PKCS#1 v1.5)       | Web Crypto `verify('RSASSA-PKCS1-v1_5', ...)`                                           |
 | RSA-PSS (RSASSA-PSS)    | Web Crypto `verify({name: 'RSA-PSS', saltLength})`                                     |
 | ECDSA P-256/P-384/P-521 | Web Crypto `verify({name: 'ECDSA', hash})` after DER → IEEE P1363 signature conversion |
 
@@ -46,10 +46,14 @@ If a signature uses an algorithm outside this list (for example Ed25519, SM2, or
 - **Invalid** — verification ran and produced a negative result (bytes changed, key mismatch).
 - **Unverified** — the tool could not run verification for this algorithm. The certificate metadata is still shown, but you should treat the signature as "unknown" and verify it with Adobe Acrobat or `openssl cms -verify`.
 
+Verification requires the Web Crypto API, normally available over HTTPS or on localhost. If it is unavailable, the result is **Unverified**; the tool does not fall back to the vulnerable node-forge RSA verifier.
+
+Trust checks require a connected, cryptographically verified path from the signer to the supplied certificate. Intermediate issuers must have CA/signing permissions, and certificates must be within their validity dates. Paths are bounded to eight certificates. This does not perform revocation checks or replace a complete PKI policy validator.
+
 ### Insecure Digest Algorithms
 
 - Signatures using **MD5 or SHA-1** are rejected as invalid and flagged with "Insecure Digest" status. Both algorithms have published collision attacks, so a signature over a SHA-1 or MD5 hash offers no integrity guarantee.
-- SHA-224, SHA-256, SHA-384, and SHA-512 are all accepted.
+- SHA-256, SHA-384, and SHA-512 are accepted.
 
 ### Document Coverage
 
